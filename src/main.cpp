@@ -2,6 +2,7 @@
 
 #include <SPI.h>
 #include <DMD2.h>
+#include <DMDESP.h>
 #include <fonts/SystemFont5x7.h>
 #include <fonts/Arial_Black_16.h>
 #include "DHT.h"
@@ -15,16 +16,9 @@
 #include <ESP8266WebServer.h>
 #include <WiFiManager.h> //https://github.com/tzapu/WiFiManager
 
-#include <DMDESP.h>
-#include <fonts/DejaVuSans9.h>
 
-// SETUP DMD
-#define DISPLAYS_WIDE 4                    // Kolom Panel
-#define DISPLAYS_HIGH 1                    // Baris Panel
-DMDESP Disp(DISPLAYS_WIDE, DISPLAYS_HIGH); // Jumlah Panel P10 yang digunakan (KOLOM,BARIS)
-
-unsigned long myChannelNumber = 3;
-const char * myWriteAPIKey = "CBHFE8I3YQ0S6A0G";
+unsigned long myChannelNumber = 1;
+const char * myWriteAPIKey = "K9YK5F2GQ5QME81I";
 WiFiClient client;
 
 #define mq2pin D2
@@ -43,13 +37,13 @@ int windSpeedMph = 0;
 int altitude = 702;
 int pressure = 0;
 String gasStatus = "";
-String MESSAGE = "";
 
-const int WIDTH = 4;
 const uint8_t *FONT = Arial_Black_16;
+//SETUP DMD
+#define DISPLAYS_WIDE 4 // Kolom Panel
+#define DISPLAYS_HIGH 1 // Baris Panel
+DMDESP Disp(DISPLAYS_WIDE, DISPLAYS_HIGH);
 
-SPIDMD  dmd(WIDTH,1);
-DMD_TextBox box(dmd);
 class Task
 {
 public:
@@ -81,42 +75,27 @@ float mapfloat(float x, float in_min, float in_max, float out_min, float out_max
 }
 
 
-
-void TeksJalan(int y, uint8_t kecepatan)
-{
-    
+void TeksJalan(int y, uint8_t kecepatan) {
+    String pesan = "Selamat datang di PIKSI GANESHA Bandung || Mini Weather Station Ganesha Purple || Suhu : " + String(suhu) + " C - Kelembaban : " + String(kelembaban) + " % - Kecepatan Angin : " + String(windSpeed) + " m/h - Gas : " + gasStatus ;
     static uint32_t pM;
     static uint32_t x;
     int width = Disp.width();
-    Disp.setFont(Arial_Black_16);
-    int fullScroll = Disp.textWidth(MESSAGE.c_str()) + width;
-    if ((millis() - pM) > kecepatan)
-    {
+    Disp.setFont(FONT);
+    int fullScroll = Disp.textWidth(pesan.c_str()) + width;
+    if((millis() - pM) > kecepatan) { 
         pM = millis();
-        if (x < fullScroll)
-        {
-            ++x;
+        if (x < fullScroll) {
+        ++x;
+        } else {
+        x = 0;
+        return;
         }
-        else
-        {
-            x = 0;
-            return;
-        }
-        Disp.drawText(width - x, y, MESSAGE.c_str());
-    }
+        Disp.drawText(width - x, y, pesan.c_str());
+    }  
 }
+// = = = = = = = = === = = =  =
 
-void setup()
-{
-    Serial.begin(115200);
-    Disp.start();
-    Disp.setBrightness(20);
-    Disp.setFont(Arial_Black_16);
-}
-
-void loop()
-{
-
+Task dataUpdate(5000, [](){
     float sensorValue = analogRead(A0);
     float voltage = (sensorValue / 1023) * 5;
 
@@ -144,16 +123,70 @@ void loop()
     }
     if (mq2Value > 0)
     {
-        gasStatus = "Udara Kotor";
+        gasStatus = "Terdeteksi";
     }
     else
     {
-        gasStatus = "Udara Bersih";
+        gasStatus = "Tidak Terdeteksi";
     }
 
-    MESSAGE = "Start" + gasStatus + " || Temperatur : " + String(suhu) + " C || Kelembaban : " + String(kelembaban) + " % || Indeks Panas : " + String(indeksPanas) + " C || Kecepatan Angin : " + String(windSpeed) + " m/s";
-    Serial.println(MESSAGE);
-    delay(1000);
-    // Disp.loop();      // Jalankan Disp loop untuk refresh LED
-    // TeksJalan(0, 50); // Tampilkan teks berjalan TeksJalan(posisi y, kecepatan);
+    Serial.println("Data Updated");
+    Serial.println("mq2Value    : " + String(mq2Value)+" ppm");
+    Serial.println("gasStatus   : " + gasStatus);
+    Serial.println("suhu        : " + String(suhu)+" C");
+    Serial.println("kelembaban  : " + String(kelembaban)+" %");
+    Serial.println("indeksPanas : " + String(indeksPanas)+" C");
+    Serial.println("windSpeed   : " + String(windSpeed)+" m/s");
+    Serial.println("windSpeedMph: " + String(windSpeedMph)+" mph");
+    Serial.println();
+});
+
+Task thingspeakUpdate(1800000, [](){ 
+    ThingSpeak.setField(1, suhu);
+    ThingSpeak.setField(2, kelembaban);
+    ThingSpeak.setField(3, mq2Value);
+    ThingSpeak.setField(4, windSpeed);
+
+    // set the status
+    ThingSpeak.setStatus("myStatus OK");
+
+    // write to the ThingSpeak channel
+    ThingSpeak.writeFields(myChannelNumber, myWriteAPIKey);
+    int x = ThingSpeak.writeFields(myChannelNumber, myWriteAPIKey);
+    if(x == 200){
+        Serial.println("Channel update successful.");
+    }
+    else{
+        Serial.println("Problem updating channel. HTTP error code " + String(x));
+    }
+});
+
+void setup()
+{
+    Serial.begin(115200);
+    pinMode(mq2pin, INPUT);
+    pinMode(DHTPIN, INPUT);
+    pinMode(windSpeedPin, INPUT);
+
+    Disp.start(); // Jalankan library DMDESP
+    Disp.setBrightness(20); // Tingkat kecerahan
+    Disp.setFont(FONT);
+   
+    WiFiManager wifiManager;
+    wifiManager.autoConnect("Ganesha Purple V2");
+    Serial.println("connected...yeey :)");
+    ThingSpeak.begin(client);
+
+    delay(3000);
+    dht.begin();
+
+     // Tentukan huruf
+}
+
+void loop()
+{
+    dataUpdate.update();
+    thingspeakUpdate.update();
+    Disp.loop();
+    TeksJalan(0, 50);
 }
