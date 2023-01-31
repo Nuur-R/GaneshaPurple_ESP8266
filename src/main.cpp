@@ -21,10 +21,11 @@ unsigned long myChannelNumber = 1;
 const char * myWriteAPIKey = "K9YK5F2GQ5QME81I";
 WiFiClient client;
 
-#define mq2pin D2
+#define mq2pin A0
 #define DHTPIN D1
-#define windSpeedPin A0
+// #define windSpeedPin A0
 #define DHTTYPE DHT22
+int windSpeedPin = 4;
 
 DHT dht(DHTPIN, DHTTYPE);
 
@@ -33,10 +34,27 @@ int kelembaban = 0;
 int suhu = 0;
 int indeksPanas = 0;
 int windSpeed = 0;
-int windSpeedMph = 0;
-int altitude = 702;
-int pressure = 0;
-String gasStatus = "";
+
+// windSpeed
+const bool debugOutput = true;
+const float number_reed = 4;
+
+unsigned long  next_timestamp = 0;
+volatile unsigned long i = 0;
+float wind = 0;
+float last_wind = 0;
+int count = 0;
+volatile unsigned long last_micros;
+long debouncing_time = 5; //in millis
+char charBuffer[32];
+
+void ICACHE_RAM_ATTR Interrupt()
+{
+  if((long)(micros() - last_micros) >= debouncing_time * 1000) {
+    i++;
+    last_micros = micros();
+  }
+}
 
 const uint8_t *FONT = Arial_Black_16;
 //SETUP DMD
@@ -69,14 +87,9 @@ private:
     void (*callback)();
 };
 
-float mapfloat(float x, float in_min, float in_max, float out_min, float out_max)
-{
-    return (x - in_min) * (out_max - out_min) / (in_max - in_min) + out_min;
-}
-
 
 void TeksJalan(int y, uint8_t kecepatan) {
-    String pesan = "Selamat datang di PIKSI GANESHA Bandung || Mini Weather Station Ganesha Purple || Suhu : " + String(suhu) + " C - Kelembaban : " + String(kelembaban) + " % - Kecepatan Angin : " + String(windSpeed) + " m/h - Gas : " + gasStatus ;
+    String pesan = "Selamat datang di PIKSI GANESHA Bandung || Mini Weather Station Ganesha Purple || Suhu : " + String(suhu) + " C - Kelembaban : " + String(kelembaban) + " % - Kecepatan Angin : " + String(windSpeed) + " m/h - Kadar CO2 : " + mq2Value + " ppm";
     static uint32_t pM;
     static uint32_t x;
     int width = Disp.width();
@@ -96,52 +109,56 @@ void TeksJalan(int y, uint8_t kecepatan) {
 // = = = = = = = = === = = =  =
 
 Task dataUpdate(5000, [](){
-    float sensorValue = analogRead(A0);
-    float voltage = (sensorValue / 1023) * 5;
 
-    windSpeed = mapfloat(voltage, 0.4, 2, 0, 32.4);
-    windSpeedMph = ((windSpeed * 3600) / 1609.344);
-
-    if (windSpeed <= 0)
-    {
-        windSpeed = windSpeed * -1;
-    }
-    if (windSpeedMph <= 0)
-    {
-        windSpeedMph = windSpeedMph * -1;
-    }
-
-    mq2Value = digitalRead(mq2pin);
+    mq2Value = analogRead(mq2pin);
     kelembaban = dht.readHumidity();
     suhu = dht.readTemperature();
     indeksPanas = dht.computeHeatIndex(suhu, kelembaban, false);
-    pressure = 0;
+
 
     if (isnan(kelembaban) || isnan(suhu)) {
         Serial.println(F("Failed to read from DHT sensor!"));
         return;
     }
-    if (mq2Value > 0)
-    {
-        gasStatus = "Terdeteksi";
+    if (millis() > next_timestamp )    
+    { 
+        detachInterrupt(windSpeedPin);
+        count++; 
+        float rps = i/number_reed; //computing rounds per second 
+        if(i == 0)
+        wind = 0.0;
+        else
+        wind = 1.761 / (1 + rps) + 3.013 * rps;// found here: https://www.amazon.de/gp/customer-reviews/R3C68WVOLJ7ZTO/ref=cm_cr_getr_d_rvw_ttl?ie=UTF8&ASIN=B0018LBFG8 (in German)
+        if(last_wind - wind > 0.8 || last_wind - wind < -0.8 || count >= 10){
+        if(debugOutput){
+            Serial.print("Wind: ");
+            Serial.print(wind);
+            Serial.println(" km/h");
+            windSpeed = wind;
+        }
+        String strBuffer;
+        strBuffer =  String(wind);
+        strBuffer.toCharArray(charBuffer,10);
+        count = 0;
+        }
+        i = 0;
+        last_wind = wind;
+        next_timestamp  = millis()+1000; //intervall is 1s
+        attachInterrupt(windSpeedPin,Interrupt,RISING);
     }
-    else
-    {
-        gasStatus = "Tidak Terdeteksi";
-    }
+    yield();
+    
 
     Serial.println("Data Updated");
-    Serial.println("mq2Value    : " + String(mq2Value)+" ppm");
-    Serial.println("gasStatus   : " + gasStatus);
+    Serial.println("mq2Value    : " + String(mq2Value)+ " ppm");
     Serial.println("suhu        : " + String(suhu)+" C");
     Serial.println("kelembaban  : " + String(kelembaban)+" %");
     Serial.println("indeksPanas : " + String(indeksPanas)+" C");
-    Serial.println("windSpeed   : " + String(windSpeed)+" m/s");
-    Serial.println("windSpeedMph: " + String(windSpeedMph)+" mph");
+    Serial.println("windSpeed   : " + String(windSpeed)+" km/s");
     Serial.println();
 });
 
-Task thingspeakUpdate(1800000, [](){ 
+Task thingspeakUpdate(900000, [](){ 
     ThingSpeak.setField(1, suhu);
     ThingSpeak.setField(2, kelembaban);
     ThingSpeak.setField(3, mq2Value);
@@ -166,7 +183,8 @@ void setup()
     Serial.begin(115200);
     pinMode(mq2pin, INPUT);
     pinMode(DHTPIN, INPUT);
-    pinMode(windSpeedPin, INPUT);
+    pinMode(windSpeedPin, INPUT_PULLUP);
+    
 
     Disp.start(); // Jalankan library DMDESP
     Disp.setBrightness(20); // Tingkat kecerahan
@@ -179,8 +197,7 @@ void setup()
 
     delay(3000);
     dht.begin();
-
-     // Tentukan huruf
+    attachInterrupt(windSpeedPin,Interrupt,RISING);
 }
 
 void loop()
