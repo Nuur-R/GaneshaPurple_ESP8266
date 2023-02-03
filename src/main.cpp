@@ -89,7 +89,7 @@ private:
 
 
 void TeksJalan(int y, uint8_t kecepatan) {
-    String pesan = "Selamat datang di PIKSI GANESHA Bandung || Mini Weather Station Ganesha Purple || Suhu : " + String(suhu) + " C - Kelembaban : " + String(kelembaban) + " % - Kecepatan Angin : " + String(windSpeed) + " m/h - Kadar CO2 : " + mq2Value + " ppm";
+    String pesan = "Selamat datang di POLITEKNIK PIKSI GANESHA || Weather Station || Suhu : " + String(suhu) +(char)223+ "°C - Kelembaban : " + String(kelembaban) + " % - Kecepatan Angin : " + String(windSpeed) + " km/h - Kadar CO2 : " + mq2Value + " ppm";
     static uint32_t pM;
     static uint32_t x;
     int width = Disp.width();
